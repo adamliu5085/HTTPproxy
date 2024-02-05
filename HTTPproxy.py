@@ -18,7 +18,6 @@ def ctrl_c_pressed(signal, frame):
 # Build the proxy message
 # Separate the components from the regex groups
 def build_response(request_components):
-
     # If the request is not GET, it is not implemented
     method = request_components.group(1)
     if method != "GET":
@@ -87,6 +86,7 @@ signal.signal(signal.SIGINT, ctrl_c_pressed)
 
 # Open a socket to receive from clients
 with socket(AF_INET, SOCK_STREAM) as listen_socket:
+
     # Setup a socket to listen
     listen_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
     listen_socket.bind((address, port))
@@ -102,14 +102,16 @@ with socket(AF_INET, SOCK_STREAM) as listen_socket:
         with skt as skt:
 
             # Parse receive request to a string
-            parsed_request = ""
-            while not parsed_request.endswith("\r\n\r\n"):
-                request = skt.recv(2048)
-                parsed_request = request.decode('utf-8')
+            parsed_request = b""
+            while True:
+                if parsed_request.endswith(b"\r\n\r\n"):
+                    break
+                temp = skt.recv(2048)
+                parsed_request += temp
 
             # Read the data from the client and check for properly formatted HTTP request.
             request_pattern = re.compile(r"^([A-Z]+) ([^ ]+)\s+(HTTP/\d+\.\d+)\s+(([\w-]+: .+(?:\n[\t ]+.+)*\s+)*)$")
-            components = request_pattern.match(parsed_request)
+            components = request_pattern.match(parsed_request.decode("utf-8"))
 
             # Send the request to client if valid
             if components:
@@ -126,12 +128,15 @@ with socket(AF_INET, SOCK_STREAM) as listen_socket:
                     with socket(AF_INET, SOCK_STREAM) as send_socket:
                         send_socket.connect((request_host, request_port))
                         send_socket.sendall(request_bytes.encode('utf-8'))
-                        response = send_socket.recv(2048)
-                        server_response = response.decode('utf-8')
-                        skt.sendall(server_response.encode('utf-8'))
+                        server_response = b""
+                        while True:
+                            temp_response = send_socket.recv(2048)
+                            if not temp_response:
+                                break
+                            server_response += temp_response
+                        skt.sendall(server_response)
 
             # Otherwise the request is bad
             else:
                 bad_request = "HTTP/1.0 400 Bad Request\r\n\r\n"
                 skt.send(bad_request.encode('utf-8'))
-
