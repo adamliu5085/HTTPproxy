@@ -1,4 +1,6 @@
-# ADAM LIU CS4480
+# ADAM LIU
+# HTTP Proxy 1.0
+
 import signal
 from optparse import OptionParser
 import sys
