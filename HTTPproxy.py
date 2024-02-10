@@ -7,6 +7,7 @@ import sys
 from socket import *
 import re
 from urllib.parse import urlparse
+import threading
 
 
 # Signal handler for pressing ctrl-c
@@ -15,6 +16,50 @@ def ctrl_c_pressed(signal, frame):
 
 
 # TODO: Put function definitions here
+
+def proxy(skt):
+    # Begin to parse the accepted request
+    with skt as skt:
+
+        # Parse receive request to a string
+        parsed_request = b""
+        while True:
+            if parsed_request.endswith(b"\r\n\r\n"):
+                break
+            temp = skt.recv(2048)
+            parsed_request += temp
+
+        # Read the data from the client and check for properly formatted HTTP request.
+        request_pattern = re.compile(r"^([A-Z]+) ([^ ]+)\s+(HTTP/\d+\.\d+)\s+(([\w-]+: .+(?:\n[\t ]+.+)*\s+)*)$")
+        components = request_pattern.match(parsed_request.decode("utf-8"))
+
+        # Send the request to client if valid
+        if components:
+
+            # Call the response builder function and send it
+            request_bytes, request_port, request_host = build_response(components)
+            if request_port is None or request_host is None:
+                skt.send(request_bytes.encode('utf-8'))
+
+            # Create a new socket to send the response on the specified port
+            else:
+
+                # Open a new socket, send the server the parsed request, get the response, and send to client
+                with socket(AF_INET, SOCK_STREAM) as send_socket:
+                    send_socket.connect((request_host, request_port))
+                    send_socket.sendall(request_bytes.encode('utf-8'))
+                    server_response = b""
+                    while True:
+                        temp_response = send_socket.recv(2048)
+                        if not temp_response:
+                            break
+                        server_response += temp_response
+                    skt.sendall(server_response)
+
+        # Otherwise the request is bad
+        else:
+            bad_request = "HTTP/1.0 400 Bad Request\r\n\r\n"
+            skt.send(bad_request.encode('utf-8'))
 
 
 # Build the proxy message
@@ -32,7 +77,7 @@ def build_response(request_components):
 
     # Obtain the url attributes
     url = request_components.group(2)
-    url_pattern = re.compile(r'^([a-zA-Z]+)://([^\/]+)(\/.*)?$')
+    url_pattern = re.compile(r'^([a-zA-Z]+)://([^/]+)(/.*)?$')
     if not (url_pattern.match(url)):
         return "HTTP/1.0 400 Bad Request\r\n\r\n", None, None
     parsed_url = urlparse(url)
@@ -49,8 +94,8 @@ def build_response(request_components):
         port = int(parsed_url.netloc.split(":")[1])
 
     # Build and return the request, if there are additional headers, include them
-    if components.group(4):
-        other_headers = components.group(4)
+    if request_components.group(4):
+        other_headers = request_components.group(4)
         modified_headers = re.sub(r'Connection: [a-zA-Z0-9-]+\s+', "", other_headers)
         response = method + " " + path + " " + http_version + "\r\n" + \
                    "Host: " + host + "\r\n" + \
@@ -100,45 +145,5 @@ with socket(AF_INET, SOCK_STREAM) as listen_socket:
         listen_socket.listen()
         skt, addr = listen_socket.accept()
 
-        # Begin to parse the accepted request
-        with skt as skt:
-
-            # Parse receive request to a string
-            parsed_request = b""
-            while True:
-                if parsed_request.endswith(b"\r\n\r\n"):
-                    break
-                temp = skt.recv(2048)
-                parsed_request += temp
-
-            # Read the data from the client and check for properly formatted HTTP request.
-            request_pattern = re.compile(r"^([A-Z]+) ([^ ]+)\s+(HTTP/\d+\.\d+)\s+(([\w-]+: .+(?:\n[\t ]+.+)*\s+)*)$")
-            components = request_pattern.match(parsed_request.decode("utf-8"))
-
-            # Send the request to client if valid
-            if components:
-
-                # Call the response builder function and send it
-                request_bytes, request_port, request_host = build_response(components)
-                if request_port is None or request_host is None:
-                    skt.send(request_bytes.encode('utf-8'))
-
-                # Create a new socket to send the response on the specified port
-                else:
-
-                    # Open a new socket, send the server the parsed request, get the response, and send to client
-                    with socket(AF_INET, SOCK_STREAM) as send_socket:
-                        send_socket.connect((request_host, request_port))
-                        send_socket.sendall(request_bytes.encode('utf-8'))
-                        server_response = b""
-                        while True:
-                            temp_response = send_socket.recv(2048)
-                            if not temp_response:
-                                break
-                            server_response += temp_response
-                        skt.sendall(server_response)
-
-            # Otherwise the request is bad
-            else:
-                bad_request = "HTTP/1.0 400 Bad Request\r\n\r\n"
-                skt.send(bad_request.encode('utf-8'))
+        # Handle request with a new thread
+        threading.Thread(target=proxy, args=(skt,)).start()
