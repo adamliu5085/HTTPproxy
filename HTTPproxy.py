@@ -61,6 +61,45 @@ def proxy(skt):
             bad_request = "HTTP/1.0 400 Bad Request\r\n\r\n"
             skt.send(bad_request.encode('utf-8'))
 
+def cache_blocklist_control(control_request):
+
+    # Get the type of the request
+    control_type = control_request.group(1)
+    control_action = control_request.group(2)
+
+    # Cache control
+    if control_type == "cache":
+        if control_action == "enable":
+            global cache_enabled
+            cache_enabled = True
+        elif control_action == "disable":
+            global cache_enabled
+            cache_enabled = False
+        elif control_action == "flush":
+            global proxy_cache
+            proxy_cache.clear()
+
+    # Blocklist control
+    if control_type == "blocklist":
+        if control_action == "enable":
+            global blocklist_enabled
+            blocklist_enabled = True
+        elif control_action == "disable":
+            global blocklist_enabled
+            blocklist_enabled = False
+        elif control_action == "add":
+            blocked_site = control_request.group(3)
+            global blocked_sites
+            blocked_sites.add(blocked_site)
+        elif control_action == "remove":
+            global blocked_sites
+            blocked_site = control_request.group(3)
+            global blocked_sites
+            blocked_sites.remove(blocked_site)
+        elif control_action == "flush":
+            global blocked_sites
+            blocked_sites.clear()
+    return "200 OK"
 
 # Build the proxy message
 # Separate the components from the regex groups
@@ -81,13 +120,20 @@ def build_response(request_components):
     if not (url_pattern.match(url)):
         return "HTTP/1.0 400 Bad Request\r\n\r\n", None, None
     parsed_url = urlparse(url)
+
+    # TODO: CHECK DOMAIN BLOCKED HOSTS
     host = parsed_url.hostname
 
+    # TODO: PARSE THE PROXY CACHE CONTROL AND BLOCKLIST CONTROL
     # Get the path and ensure it is valid
     path = parsed_url.path
     if path == "":
         return "HTTP/1.0 400 Bad Request\r\n\r\n", None, None
-
+    control_pattern = re.compile(r"^/proxy/(cache|blocklist)/(enable|disable|flush|add|remove)(?:/(.+))?$")
+    control_components = control_pattern.match(path)
+    if control_components:
+        control_response = cache_blocklist_control(control_components)
+        return control_response
     # Default the port to 80 otherwise parse out the intended port
     port = 80
     if ":" in parsed_url.netloc:
@@ -129,7 +175,19 @@ if port is None:
 # Set up signal handling (ctrl-c)
 signal.signal(signal.SIGINT, ctrl_c_pressed)
 
-# TODO: Set up sockets to receive requests
+# TODO: CACHE
+# TODO: CACHE TIME TO LIVE
+# TODO: DOMAIN BLOCKLIST
+
+# TODO: ENSURE WHEN TO CHANGE THIS
+# Set the cache to disabled initially
+cache_enabled = False
+proxy_cache = set()
+
+# TODO: ENSURE WHEN TO CHANGE THIS
+# Set the blocklist to disabled initially, and create an empty set
+blocklist_enabled = False
+blocked_sites = set()
 
 # Open a socket to receive from clients
 with socket(AF_INET, SOCK_STREAM) as listen_socket:
